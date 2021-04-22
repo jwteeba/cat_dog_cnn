@@ -1,72 +1,140 @@
-# Convolutional Neural Network
-
-# Importing the libraries
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+import PIL
 import tensorflow as tf
-from keras.preprocessing.image import ImageDataGenerator
-tf.__version__
 
-# Part 1 - Data Preprocessing
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.models import Sequential
+
+from tensorflow.python.client import device_lib
+
+
+print(tf.__version__)
+print("\nNum GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+print("\n", device_lib.list_local_devices()[1])
+
 
 # Preprocessing the Training set
-train_datagen = ImageDataGenerator(rescale = 1./255,
-                                   shear_range = 0.2,
-                                   zoom_range = 0.2,
-                                   horizontal_flip = True)
-training_set = train_datagen.flow_from_directory('dataset/training_set',
-                                                 target_size = (64, 64),
-                                                 batch_size = 32,
-                                                 class_mode = 'binary')
+train_ds = tf.keras.preprocessing.image_dataset_from_directory(
+  '/path/to/train',
+  seed=123,
+  image_size=(64, 64),
+  batch_size=32)
+
 
 # Preprocessing the Test set
-test_datagen = ImageDataGenerator(rescale = 1./255)
-test_set = test_datagen.flow_from_directory('dataset/test_set',
-                                            target_size = (64, 64),
-                                            batch_size = 32,
-                                            class_mode = 'binary')
+val_ds = tf.keras.preprocessing.image_dataset_from_directory(
+  '/path/to/test/',
+  seed=123,
+  image_size=(64, 64),
+  batch_size=32)
 
-# Part 2 - Building the CNN
+class_names = train_ds.class_names
 
-# Initialising the CNN
-cnn = tf.keras.models.Sequential()
 
-# Step 1 - Convolution
-cnn.add(tf.keras.layers.Conv2D(filters=32, kernel_size=3, activation='relu', input_shape=[64, 64, 3]))
+# Configure the dataset for performance
+AUTOTUNE = tf.data.AUTOTUNE
 
-# Step 2 - Pooling
-cnn.add(tf.keras.layers.MaxPool2D(pool_size=2, strides=2))
+train_ds = train_ds.cache().shuffle(1000).prefetch(buffer_size=AUTOTUNE)
+val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
 
-# Adding a second convolutional layer
-cnn.add(tf.keras.layers.Conv2D(filters=32, kernel_size=3, activation='relu'))
-cnn.add(tf.keras.layers.MaxPool2D(pool_size=2, strides=2))
 
-# Step 3 - Flattening
-cnn.add(tf.keras.layers.Flatten())
+# Data augmentation to fight overfiting
+data_augmentation = keras.Sequential(
+  [
+    layers.experimental.preprocessing.RandomFlip("horizontal", 
+                                                 input_shape=(64, 
+                                                              64,
+                                                              3)),
+    layers.experimental.preprocessing.RandomRotation(0.1),
+    layers.experimental.preprocessing.RandomZoom(0.1),
+  ]
+)
 
-# Step 4 - Full Connection
-cnn.add(tf.keras.layers.Dense(units=128, activation='relu'))
+# Create Model
+num_classes = 2
+cnn_model = Sequential([
+  data_augmentation,
+  layers.experimental.preprocessing.Rescaling(1./255, input_shape=(64, 64, 3)),
+  layers.Conv2D(32, 3, padding='same', activation='relu'),
+  layers.MaxPooling2D(),
+  layers.Conv2D(32, 3, padding='same', activation='relu'),
+  layers.MaxPooling2D(),
+  layers.Conv2D(32, 3, padding='same', activation='relu'),
+  layers.MaxPooling2D(),
+  layers.Dropout(0.2),
+  layers.Flatten(),
+  layers.Dense(128, activation='relu'),
+  layers.Dense(num_classes)
+])
 
-# Step 5 - Output Layer
-cnn.add(tf.keras.layers.Dense(units=1, activation='sigmoid'))
+# Compile Model
+cnn_model.compile(optimizer='adam',
+              loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+              metrics=['accuracy'])
 
-# Part 3 - Training the CNN
+# Model summary
+print(cnn_model.summary())
 
-# Compiling the CNN
-cnn.compile(optimizer = 'adam', loss = 'binary_crossentropy', metrics = ['accuracy'])
+# Train model
+from time import perf_counter
+epochs=200
+start_time = perf_counter()
+history = cnn_model.fit(
+  train_ds,
+  validation_data=val_ds,
+  epochs=epochs
+)
+end_time = perf_counter()
+print(f'Completion Time: {end_time - start_time}')
 
-# Training the CNN on the Training set and evaluating it on the Test set
-cnn.fit(x = training_set, validation_data = test_set, epochs = 25)
 
-# Part 4 - Making a single prediction
+# Visualize training results
+acc = history.history['accuracy']
+val_acc = history.history['val_accuracy']
 
-import numpy as np
-from keras.preprocessing import image
-test_image = image.load_img('dataset/single_prediction/cat_or_dog_1.jpg', target_size = (64, 64))
-test_image = image.img_to_array(test_image)
-test_image = np.expand_dims(test_image, axis = 0)
-result = cnn.predict(test_image)
-training_set.class_indices
-if result[0][0] == 1:
-    prediction = 'dog'
-else:
-    prediction = 'cat'
-print(prediction)
+loss = history.history['loss']
+val_loss = history.history['val_loss']
+
+epochs_range = range(epochs)
+
+plt.figure(figsize=(8, 8))
+plt.subplot(1, 2, 1)
+plt.plot(epochs_range, acc, label='Training Accuracy')
+plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+plt.legend(loc='lower right')
+plt.title('Training and Validation Accuracy')
+
+plt.subplot(1, 2, 2)
+plt.plot(epochs_range, loss, label='Training Loss')
+plt.plot(epochs_range, val_loss, label='Validation Loss')
+plt.legend(loc='upper right')
+plt.title('Training and Validation Loss')
+plt.show()
+
+
+# Predict on new data
+# img_url = "http://www.luckygoldenretriever.com/wp-content/uploads/2016/12/Cleaning_Your_Dogs_Ears.jpg"
+# img_path = tf.keras.utils.get_file('dog1', origin=img_url)
+
+# img = keras.preprocessing.image.load_img(
+#     img_path, target_size=(64, 64)
+# )
+# img_array = keras.preprocessing.image.img_to_array(img)
+# img_array = tf.expand_dims(img_array, 0) 
+
+
+# predictions = cnn_model.predict(img_array)
+# score = tf.nn.softmax(predictions[0])
+
+# print(
+#     "This image most likely belongs to {} with a {:.2f} percent confidence."
+#     .format(class_names[np.argmax(score)], 100 * np.max(score))
+# )
+
+# save model
+cnn_model.save('catdog_cnn_model.h5')
+
+
